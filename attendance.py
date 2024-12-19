@@ -100,7 +100,7 @@ if not video.isOpened():
     print("Error accessing the camera. Exiting...")
     exit()
 
-COL_NAMES = ['NAME', 'TIME', 'CONFIDENCE']
+COL_NAMES = ['NAME', 'TIME', 'ACCURACY']
 facedetect = cv2.CascadeClassifier(FACE_CASCADE_PATH)
 
 while True:
