@@ -6,13 +6,13 @@ import csv
 from pathlib import Path
 from datetime import datetime
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Paths and Directories
 DATA_DIR = Path('data')
 ATTENDANCE_DIR = Path('Attendance')
 FACE_CASCADE_PATH = str(DATA_DIR / 'haarcascade_frontalface_default.xml')
@@ -21,7 +21,7 @@ IMG_SIZE = (50, 50)
 DATA_DIR.mkdir(exist_ok=True)
 ATTENDANCE_DIR.mkdir(exist_ok=True)
 
-# Load Data
+
 try:
     with open(DATA_DIR / 'names.pkl', 'rb') as f:
         LABELS = pickle.load(f)
@@ -32,50 +32,32 @@ except FileNotFoundError:
     print("Model data not found. Ensure training is completed.")
     exit()
 
-# Normalize Data
-scaler = StandardScaler()
+
+scaler = MinMaxScaler()
 FACES = scaler.fit_transform(FACES)
 
-# Reduce Training Data (use only 20% of data to reduce accuracy)
-FACES = FACES[:int(len(FACES) * 0.2)]
-LABELS = LABELS[:int(len(LABELS) * 0.2)]
+pca = PCA(n_components=50) 
+FACES = pca.fit_transform(FACES)
 
-# Add more noise to the data to decrease accuracy
-noise_factor = 0.8  # Increased noise to make it harder for the model
-FACES += noise_factor * np.random.randn(*FACES.shape)
-
-# Split Data
 X_train, X_test, y_train, y_test = train_test_split(FACES, LABELS, test_size=0.3, random_state=42)
 
-# Train KNN Model with a higher value for neighbors to reduce performance
-knn = KNeighborsClassifier(n_neighbors=30, weights='distance')  # Try a larger value and 'distance' weight
+knn = KNeighborsClassifier(n_neighbors=5, weights='uniform') 
 knn.fit(X_train, y_train)
 
-# Evaluate Model
-y_pred = knn.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Model Accuracy: {accuracy:.2f}")
-
-# ---- Visualization ----
-
-# 1. Accuracy vs. Number of Neighbors
-neighbors = list(range(1, 31))
+neighbors = list(range(1, 100))
 accuracies = []
 
 for k in neighbors:
-    knn = KNeighborsClassifier(n_neighbors=k, weights='distance')
-    knn.fit(X_train, y_train)
-    y_pred = knn.predict(X_test)
-    accuracies.append(accuracy_score(y_test, y_pred))
+    knn = KNeighborsClassifier(n_neighbors=k, weights='uniform') 
+    cv_scores = cross_val_score(knn, FACES, LABELS, cv=5)
+    accuracies.append(cv_scores.mean()) 
 
 plt.plot(neighbors, accuracies)
 plt.xlabel('Number of Neighbors')
 plt.ylabel('Accuracy')
-plt.title('Accuracy vs. Number of Neighbors')
+plt.title('Accuracy vs. Number of Neighbors (Cross-Validation)')
 plt.show()
 
-
-# 3. Training vs. Testing Accuracy with different train-test splits
 train_accuracies = []
 test_accuracies = []
 
@@ -94,7 +76,10 @@ plt.title('Training and Testing Accuracy vs Test Size')
 plt.legend()
 plt.show()
 
-# Real-Time Attendance System
+y_pred = knn.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Model Accuracy: {accuracy:.2f}")
+
 video = cv2.VideoCapture(0)
 if not video.isOpened():
     print("Error accessing the camera. Exiting...")
@@ -116,13 +101,14 @@ while True:
         for (x, y, w, h) in faces:
             crop_img = frame[y:y+h, x:x+w, :]
             resized_img = cv2.resize(crop_img, IMG_SIZE).flatten().reshape(1, -1)
-            resized_img = scaler.transform(resized_img)  # Normalize real-time input
+            resized_img = scaler.transform(resized_img) 
 
-            # Predict the class and calculate confidence
+            resized_img = pca.transform(resized_img)
+
             distances, indices = knn.kneighbors(resized_img)
             prediction = knn.predict(resized_img)[0]
-            confidence = 1 - (distances[0][0] / distances[0].sum())  # Confidence as a normalized distance
-            
+            confidence = 1 - (distances[0][0] / distances[0].sum()) 
+
             timestamp = datetime.now().strftime("%H:%M:%S")
             date = datetime.now().strftime("%Y-%m-%d")
             file_path = ATTENDANCE_DIR / f"Attendance_{date}.csv"
@@ -132,7 +118,6 @@ while True:
             text = f"{prediction} ({accuracy:.2f})"
             cv2.putText(frame, text, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-            # Record attendance and stop system after saving
             attendance = [prediction, timestamp, f"{accuracy:.2f}"]
             if cv2.waitKey(1) & 0xFF == ord('o'):
                 if not file_path.exists():
@@ -142,11 +127,10 @@ while True:
                 with open(file_path, 'a', newline='') as csvfile:
                     writer = csv.writer(csvfile)
                     writer.writerow(attendance)
-                
-                # Stop the system after recording attendance
+
                 print(f"Attendance recorded for {prediction} at {timestamp}")
-                break  # Exit the loop after recording attendance
-            
+                break 
+
         cv2.imshow("Attendance System", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -156,7 +140,6 @@ while True:
         print(f"An error occurred: {e}")
         break
 
-# Release the video capture and close windows
 video.release()
 cv2.destroyAllWindows()
 print("Attendance system closed.")
